@@ -3,6 +3,7 @@
 This is a version that combines [hn-cli](https://github.com/iszla/hn-cli) and [hn-parser](https://github.com/iszla/hn-parser), into one file. So no need to generate and load JSON files.
 
 This version is built on, and requires, Python 3 and BeautifulSoup4
+I have also added a Python 2 version, this version does not have any external config options.
 
 Based on [cortex](https://github.com/GGLucas/cortex)
 
@@ -25,4 +26,5 @@ Run the app
 
 * Press 'Enter' or 'o' to open the story in a browser
 * Press 'c' to open the story on Hacker News to read the comments
+* Press 't' to toggle between Top and New stories
 * Set browser-command in the config file to use another browser, such as lynx
