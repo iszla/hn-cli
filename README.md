@@ -20,3 +20,9 @@ Run the app
 ```
 ./hn-cli
 ```
+
+# Usage
+
+* Press 'Enter' or 'o' to open the story in a browser
+* Press 'c' to open the story on Hacker News to read the comments
+* Set browser-command in the config file to use another browser, such as lynx
