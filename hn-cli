@@ -112,28 +112,20 @@ Binds = {
     ord("r"): "update",
     ord("m"): "toggle-minimal",
     ord("t"): "toggle-top-new",
-
     ord("k"): "prev-line",
     ord("j"): "next-line",
-
     ord("0"): "first-line",
     ord("g"): "first-line",
     ord("$"): "last-line",
     ord("G"): "last-line",
-
     ord("o"): "open",
     10: "open",
-
     ord("c"): "open-comments",
-
-    ord(""): "redraw",
-
+    ord("FF"): "redraw",
     curses.KEY_HOME: "first-line",
     curses.KEY_END: "last-line",
-
     curses.KEY_UP: "prev-line",
     curses.KEY_DOWN: "next-line",
-
     curses.KEY_PPAGE: "prev-page",
     curses.KEY_NPAGE: "next-page",
 }
