@@ -4,11 +4,11 @@ import os
 import sys
 import time
 import curses
+import locale
 import threading
 import webbrowser
 
 from bs4 import BeautifulSoup
-from configparser import ConfigParser
 import urllib.request
 from threading import Timer
 
@@ -17,10 +17,10 @@ try:
 except ImportError:
     DEVNULL = open(os.devnull, "wb")
 
-# {{{ Constants
-APPLICATION_NAME = "Hacker News cli (standalone)"
-APPLICATION_VERSION = "0.0.2"
-APPLICATION_URI = "https://github.com/iszla/hn-cli-standalone"
+
+APPLICATION_NAME = "Hacker News cli"
+APPLICATION_VERSION = "0.0.3"
+APPLICATION_URI = "https://github.com/iszla/hn-cli"
 
 TOP_STORIES = "https://news.ycombinator.com"
 NEW_STORIES = "https://news.ycombinator.com/newest"
@@ -29,7 +29,6 @@ HN_URI = "https://news.ycombinator.com/item?id="
 CONF_DIR = os.getenv("HOME") + "/.hn-cli"
 CONF_LOCATION = CONF_DIR + "/config"
 
-# {{{ Version/Help text
 VERSIONTEXT = """%(name)s v%(version)s <%(uri)s>
 
 Copyright (c) iszla https://github.com/iszla
@@ -52,7 +51,6 @@ Usage: {{CMD}} [-v|--version] [-h|--help]
     Enter - Open story URL in browser
     c - Open comments in browser
 """.replace("{{CMD}}", sys.argv[0], 1)
-# }}}
 
 GETCH_TIMEOUT = 400
 
@@ -67,32 +65,26 @@ COLOR_NAME = {
     "white": 7,
     "default": -1,
 }
-# }}}
 
-# {{{ Configuration
-# Default config
-Config = {
-    "browser-command": "",
+CONFIG = {
     "update-interval": 10,
 }
 
 
 if hasattr(str, "format"):
-    Config.update({
+    CONFIG.update({
         "title-format": " -- {title}",
-        "entry-format-minimal": " {title} %>  | {comments:<4}",
         "entry-format-full": " {title} %> Posted by: {by}%n " +
                              " [{score:4}] {domain} %>   {comments:4}",
     })
 else:
-    Config.update({
+    CONFIG.update({
         "title-format": " -- %(title)s",
-        "entry-format-minimal": " %(title)s {>}  | %(comments)-4s",
         "entry-format-full": " %(title)s {>} Posted by: %(by)s {n}" +
                              "[%(score)4s] %(domain)s {>}  %(comments)4s",
     })
 
-Colors = {
+COLORS = {
     "title": ("brightyellow", "blue"),
     "normal": ("white", "black"),
     "entry": ("white", "black"),
@@ -100,98 +92,55 @@ Colors = {
     "entry-author": ("red", "black"),
     "entry-selected": ("brightyellow", "magenta"),
     "entry-data-selected": ("brightyellow", "magenta"),
-    "entry-author-selected": ("cyan", "magenta"),
+    "entry-author-selected": ("brightyellow", "magenta"),
     "entry-bottom": ("green", "black"),
     "entry-bottom-selected": ("brightyellow", "magenta"),
     "entry-bottom-data": ("yellow", "black"),
     "entry-bottom-data-selected": ("brightyellow", "magenta"),
 }
 
-Binds = {
+BINDS = {
     ord("q"): "quit",
     ord("r"): "update",
     ord("m"): "toggle-minimal",
     ord("t"): "toggle-top-new",
-    ord("k"): "prev-line",
-    ord("j"): "next-line",
-    ord("0"): "first-line",
-    ord("g"): "first-line",
-    ord("$"): "last-line",
-    ord("G"): "last-line",
     ord("o"): "open",
     10: "open",
     ord("c"): "open-comments",
-    ord("FF"): "redraw",
-    curses.KEY_HOME: "first-line",
-    curses.KEY_END: "last-line",
+    ord("f"): "redraw",
     curses.KEY_UP: "prev-line",
     curses.KEY_DOWN: "next-line",
     curses.KEY_PPAGE: "prev-page",
     curses.KEY_NPAGE: "next-page",
 }
 
-Minimal = False
-BackgroundBrowser = True
-
-# Load user config
-LocalConfig = ConfigParser(interpolation=None)
-LocalConfig.read([CONF_LOCATION, ])
-
-if LocalConfig.has_section("config"):
-    for opt in LocalConfig.options("config"):
-        Config[opt] = LocalConfig.get("config", opt)
-
-        if opt == "minimal":
-            Minimal = bool(int(Config[opt]))
-        elif opt == "browser-background":
-            BackgroundBrowser = bool(int(Config[opt]))
-
-if LocalConfig.has_section("color"):
-    for cname in LocalConfig.options("color"):
-        col = LocalConfig.get("color", cname)  # removed .split(",")
-        if len(col) == 2:
-            Colors[cname] = col
-        else:
-            Colors[cname] = col[0], Colors["normal"][1]
-# }}}
-
-# {{{ Utility functions
-commands = {}
+COMMANDS = {}
 
 
-# {{{ command
-def command(name=None, cmds=None):
-    """Register a function as a command."""
+def command(name=None, CMDS=None):
     def cmd(func):
-        # Get command dict
-        if cmds is None:
-            global commands
-            cm = commands
+        if CMDS is None:
+            global COMMANDS
+            CMD = COMMANDS
         else:
-            cm = cmds
+            CMD = CMDS
 
-        cm[(name or func.__name__)] = func
+        CMD[(name or func.__name__)] = func
         return func
 
     return cmd
-# }}}
 
 
-# {{{ getcommand
-def getcommand(name, cmds=None):
-    """Get a command by name."""
-    # Get command dict
-    if cmds is None:
-        global commands
-        cmd = commands
+def getcommand(name, CMDS=None):
+    if CMDS is None:
+        global COMMANDS
+        cmd = COMMANDS
     else:
-        cmd = cmds
+        cmd = CMDS
 
-    # Exact match
     if name in cmd:
         return cmd[name]
 
-    # Prefix match
     candidate = filter(lambda x: x.startswith(name), cmd.keys())
 
     if len(candidate) == 1:
@@ -200,68 +149,23 @@ def getcommand(name, cmds=None):
         return candidate
     else:
         return None
-# }}}
 
 
-# {{{ browseropen
 def browseropen(uri):
-    """Open a link in the browser."""
-    if not BackgroundBrowser:
-        curses.curs_set(1)
     if type(uri) in (str, bytes):
-        if Config["browser-command"]:
-            if "{0}" in Config["browser-command"]:
-                cmd = Config["browser-command"].format(uri)
-            elif "%s" in Config["browser-command"]:
-                cmd = (Config["browser-command"] % uri)
-            else:
-                cmd = Config["browser-command"]+" "+uri
-            if BackgroundBrowser:
-                cmd += " &"
-                call(cmd, shell=True, stdout=DEVNULL, stderr=DEVNULL)
-            else:
-                call(cmd, shell=True)
+        browser = webbrowser.get()
+        if hasattr(browser, 'name'):
+            cmdline = browser.name + " " + uri
+            call(cmdline, shell=True, stdout=DEVNULL, stderr=DEVNULL)
         else:
-            # Taken from webbrowser source since stderr is displayed
-            # using regular browser
-            browser = webbrowser.get()
-            if hasattr(browser, 'name'):
-                cmdline = browser.name + " " + uri
-                call(cmdline, shell=True, stdout=DEVNULL, stderr=DEVNULL)
-            else:
-                webbrowser.open(uri)
+            webbrowser.open(uri)
     else:
-        if Config["browser-command"]:
-            if "{0}" in Config["browser-command"]:
-                cmd = "("+" ; ".join([Config["browser-command"].format(
-                    u) for u in uri])+")"
-            elif "%s" in Config["browser-command"]:
-                cmd = "("+" ; ".join([Config["browser-command"] %
-                                     u for u in uri])+")"
-            else:
-                cmd = "("+" ; ".join([Config["browser-command"] + " " +
-                                     u for u in uri])+")"
-            if BackgroundBrowser:
-                cmd += " &"
-                call(cmd, shell=True, stdout=DEVNULL, stderr=DEVNULL)
-            else:
-                call(cmd, shell=True)
-        else:
-            for u in uri:
-                # Taken from webbrowser source since stderr is displayed
-                # using regular browser
-                cmdline = webbrowser.get().name + " " + u
-                call(cmdline, shell=True, stdout=DEVNULL, stderr=DEVNULL)
-    if not BackgroundBrowser:
-        curses.curs_set(0)
-# }}}
-
-# }}}
+        for url in uri:
+            cmdline = webbrowser.get().name + " " + url
+            call(cmdline, shell=True, stdout=DEVNULL, stderr=DEVNULL)
 
 
-# {{{ Data
 class Data(object):
-    """Manage communication with the external website."""
     def __init__(self,):
         self.uri = TOP_STORIES
         self.loading = False
@@ -300,17 +204,14 @@ class Data(object):
                 t.start()
             else:
                 self._load()
-# }}}
 
 
-# {{{ Entry
 class Entry(object):
     def __init__(self, data):
         self.data = data
         self.reval_data()
 
     def reval_data(self):
-        """Revaluate data dictionary to set some convenience vars."""
         if "title" not in self.data:
             return
         self.data["title"] = self.data["title"].replace("\r\n", "").replace(
@@ -346,52 +247,38 @@ class Entry(object):
     def format(self, display_type, width):
         if not len(self.data):
             return ""
-        if display_type == "minimal":
-            if hasattr(str, "format"):
-                return self._line_format(Config["entry-format-minimal"].format(
-                    **self.data), width)
-            else:
-                return self._line_format(Config["entry-format-minimal"] %
-                                         self.data, width)
+        if hasattr(str, "format"):
+            lines = CONFIG["entry-format-full"].format(
+                **self.data).split("%n")
         else:
-            if hasattr(str, "format"):
-                lines = Config["entry-format-full"].format(
-                    **self.data).split("%n")
-            else:
-                lines = (Config["entry-format-full"] % self.data).split("{n}")
+            lines = (CONFIG["entry-format-full"] % self.data).split("{n}")
 
-            if len(lines) >= 2:
-                top, bottom = lines[0], lines[1]
-                bottom = self._line_format(bottom, width)
-            else:
-                top, bottom = lines[0], ("", "")
+        if len(lines) >= 2:
+            top, bottom = lines[0], lines[1]
+            bottom = self._line_format(bottom, width)
+        else:
+            top, bottom = lines[0], ("", "")
 
-            top = self._line_format(top, width)
+        top = self._line_format(top, width)
 
-            return top[0], top[1], bottom[0], bottom[1]
+        return top[0], top[1], bottom[0], bottom[1]
 
     @property
     def comment_uri(self):
-        """Get the comment uri associated with this entry."""
         if "id" not in self.data:
             return ""
         return HN_URI+self.data["id"]
 
     def open(self):
-        """Open entry link in browser."""
         if "url" in self.data:
             browseropen(self.data["url"])
 
     def opencomments(self):
-        """Open comments link in browser."""
         if self.comment_uri:
             browseropen(self.comment_uri)
-# }}}
 
 
-# {{{ Interface
 class Interface(object):
-    """Manage on-screen display through curses."""
     def __init__(self, data):
         self._quit = False
         self.scr = None
@@ -402,21 +289,17 @@ class Interface(object):
         self.need_redraw = False
         self.displayed_entries = 0
 
-        self.timer = Timer(int(Config["update-interval"])*60, self._timeout)
+        self.timer = Timer(int(CONFIG["update-interval"])*60, self._timeout)
         self.timer.start()
 
     def _timeout(self):
-        # Load data
         self.data.load(False)
 
-        # Restart timer
         del self.timer
-        self.timer = Timer(int(Config["update-interval"])*60, self._timeout)
+        self.timer = Timer(int(CONFIG["update-interval"])*60, self._timeout)
         self.timer.start()
 
     def init(self):
-        """Initialise curses screen"""
-        # Initialise curses
         self.scr = curses.initscr()
         self.scr.keypad(1)
         self.scr.timeout(GETCH_TIMEOUT)
@@ -425,11 +308,10 @@ class Interface(object):
         curses.start_color()
         curses.use_default_colors()
 
-        # Initialise colors
         self.colors = {}
         pairnum = 1
-        for cname in Colors:
-            fg, bg = Colors[cname]
+        for cname in COLORS:
+            fg, bg = COLORS[cname]
 
             if fg.startswith("bright"):
                 fbright = True
@@ -451,26 +333,21 @@ class Interface(object):
 
     @property
     def entry(self):
-        """Get the selected entry."""
         if self.selected < self.data.total:
             return self.data.entries[self.selected]
         else:
             return Entry({})
 
     def cleanup(self):
-        # Cancel timer
         self.timer.cancel()
-
-        # Cleanup curses
         curses.endwin()
 
     def main(self):
-        """Run a main loop and handle key events."""
         self.refresh()
         while not self._quit:
             key = self.scr.getch()
-            if key in Binds:
-                cmd = getcommand(Binds[key])
+            if key in BINDS:
+                cmd = getcommand(BINDS[key])
                 if callable(cmd):
                     cmd(self.data, self)
 
@@ -482,11 +359,9 @@ class Interface(object):
             y, x = self.scr.getmaxyx()
 
     def quit(self):
-        """Quit the interface and application."""
         self._quit = True
 
     def setline(self, y, x, line, color=None, offset=0, char=' '):
-        """Fill a line completely with text."""
         height, width = self.scr.getmaxyx()
         line = str(line).ljust(width-offset, char)
 
@@ -499,23 +374,19 @@ class Interface(object):
             pass
 
     def refresh(self):
-        """Refresh the curses interface."""
-        # Get dimensions
         height, width = self.scr.getmaxyx()
 
         if self.need_redraw:
             self.need_redraw = False
             self.scr.clear()
 
-        # Title line
         if hasattr(str, "format"):
-            self.setline(0, 0, Config["title-format"].format(total=self.data.total,
+            self.setline(0, 0, CONFIG["title-format"].format(total=self.data.total,
                          new=self.data.new, title=self.data.title), color="title")
         else:
-            self.setline(0, 0, Config["title-format"] % dict(total=self.data.total,
+            self.setline(0, 0, CONFIG["title-format"] % dict(total=self.data.total,
                          new=self.data.new, title=self.data.title), color="title")
 
-        # Display entries
         y = 1
         i = 0
         r = 0
@@ -524,7 +395,7 @@ class Interface(object):
         self.displayed_entries = num_entries
 
         if num_entries:
-            displayed = int((height-1-y)/(1 if Minimal else 2))
+            displayed = int((height-1-y)/(2))
             if self.selected <= self.scroll:
                 self.scroll = self.selected
             elif self.selected >= self.scroll+displayed:
@@ -542,21 +413,15 @@ class Interface(object):
                 sel = "-selected" if self.selected == r else ""
                 r += 1
 
-                if Minimal:
-                    left, right = entry.format("minimal", width-1)
+                topleft, topright, bottomleft, bottomright = entry.format("full", width-1)
 
-                    self.setline(y, 0, left, "entry"+sel)
-                    self.setline(y, len(left), right, "entry-data"+sel)
-                else:
-                    topleft, topright, bottomleft, bottomright = entry.format("full", width-1)
+                self.setline(y, 0, topleft, "entry"+sel)
+                self.setline(y, len(topleft), topright, "entry-author"+sel)
 
-                    self.setline(y, 0, topleft, "entry"+sel)
-                    self.setline(y, len(topleft), topright, "entry-author"+sel)
-
-                    if y+1 < height-1:
-                        y += 1
-                        self.setline(y, 0, bottomleft, "entry-bottom"+sel)
-                        self.setline(y, len(bottomleft), bottomright, "entry-bottom-data"+sel)
+                if y+1 < height-1:
+                    y += 1
+                    self.setline(y, 0, bottomleft, "entry-bottom"+sel)
+                    self.setline(y, len(bottomleft), bottomright, "entry-bottom-data"+sel)
             else:
                 self.setline(y, 0, "", "normal")
 
@@ -567,7 +432,6 @@ class Interface(object):
         else:
             self.setline(y, 0, "Loading...".center(width-1) if self.data.loading else " "*(width-1))
 
-        # Refresh the screen
         self.scr.refresh()
 
     def prev_line(self):
@@ -580,52 +444,10 @@ class Interface(object):
         self.selected = 0 if self.selected >= total-1 else self.selected+1
         self.need_update = True
 
-    def prev_page(self):
-        height, width = self.scr.getmaxyx()
-        total = self.displayed_entries
-        displayed = int((height-2)/(1 if Minimal else 2))
 
-        self.selected -= displayed
-        self.need_update = True
-
-        if self.selected < 0:
-            self.selected = total-1
-
-    def next_page(self):
-        height, width = self.scr.getmaxyx()
-        total = self.displayed_entries
-        displayed = int((height-2)/(1 if Minimal else 2))
-
-        self.selected += displayed
-        self.need_update = True
-
-        if self.selected >= total-1:
-            self.selected = 0
-
-    def first_line(self):
-        self.selected = 0
-        self.need_update = True
-
-    def last_line(self):
-        self.selected = self.data.total-1
-        self.need_update = True
-# }}}
-
-
-# {{{ Commands
 @command(name="quit")
 def cm_quit(data, interface):
     interface.quit()
-
-
-@command(name="first-line")
-def cm_first_line(data, interface):
-    interface.first_line()
-
-
-@command(name="last-line")
-def cm_last_line(data, interface):
-    interface.last_line()
 
 
 @command(name="prev-line")
@@ -638,19 +460,8 @@ def cm_next_line(data, interface):
     interface.next_line()
 
 
-@command(name="prev-page")
-def cm_prev_page(data, interface):
-    interface.prev_page()
-
-
-@command(name="next-page")
-def cm_next_page(data, interface):
-    interface.next_page()
-
-
 @command(name="update")
 def cm_update(data, interface):
-    # Update articles
     data.load()
     time.sleep(0.1)
     interface.need_update = True
@@ -676,32 +487,19 @@ def cm_toggle_view(data, interface):
 def cm_open(data, interface):
     interface.entry.open()
     interface.need_update = True
-    if not BackgroundBrowser:
-        interface.need_redraw = True
 
 
 @command(name="open-comments")
 def cm_opencomments(data, interface):
     interface.entry.opencomments()
     interface.need_update = True
-    if not BackgroundBrowser:
-        interface.need_redraw = True
-
-
-@command(name="toggle-minimal")
-def cm_toggle_minimal(data, interface):
-    global Minimal
-    Minimal = not Minimal
-    interface.need_update = True
 
 
 @command(name="redraw")
 def cm_redraw(data, interface):
     interface.need_update = True
-# }}}
 
-# Set LC_ALL locale to force utf-8 to work in curses
-import locale
+
 locale.setlocale(locale.LC_ALL, "")
 
 
@@ -748,7 +546,6 @@ def scrape(url):
     return stories
 
 
-# {{{ Main function
 def main():
     if len(sys.argv) > 1 and sys.argv[1] in ("-v", "--version"):
         print(VERSIONTEXT)
@@ -768,8 +565,7 @@ def main():
             interface.cleanup()
             import traceback
             traceback.print_exc()
-# }}}
+
 
 if __name__ == '__main__':
     main()
-# vim: fdm=marker:

@@ -1,17 +1,13 @@
-# Hacker News cli - standalone
+# Hacker News cli
 
 
 hn-cli is built on Python and BeautifulSoup4
-
-# News
-
-I have added a Python 2 version, this version does not have any external config options.
 
 Based on [cortex](https://github.com/GGLucas/cortex)
 
 # Install
 
-Install BeautifulSoup4 using pip (use pip3 if you have both Python 2 and 3 on your machine)
+Install BeautifulSoup4 using pip 
 ```
 sudo pip install beautifulsoup4
 ```
@@ -29,4 +25,3 @@ Run the app
 * Press 'Enter' or 'o' to open the story in a browser
 * Press 'c' to open the story on Hacker News to read the comments
 * Press 't' to toggle between Top and New stories
-* Set browser-command in the config file to use another browser, such as lynx (currently not available in the python2 verison)
